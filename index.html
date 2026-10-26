@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenBox • Dashboard</title>
+<link rel="icon" href="logo.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--b1:#18769D;--b2:#248FBB;--b3:#48A5D5;--b4:#79B5D4;--bg:#1F222A;--card:#292D30;--txt:#fff;--mut:#9fb3bf;--bad:#ff6b6b;--ok:#4cd8a0;--warn:#ffc857}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 22px;background:var(--card);border-bottom:3px solid var(--b2);position:sticky;top:0;z-index:5}
+header img{height:46px}
+.ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ctl button,.ctl input{background:var(--bg);color:var(--txt);border:1px solid var(--b1);border-radius:8px;padding:7px 12px;font:inherit;cursor:pointer}
+.ctl button.on,.ctl button:hover{background:var(--b2);border-color:var(--b2)}
+.ctl input{color-scheme:dark}
+#st{color:var(--mut);font-size:12px}
+main{padding:20px 22px;max-width:1500px;margin:auto}
+.err{background:#3a2326;border:1px solid var(--bad);padding:12px 16px;border-radius:10px;margin-bottom:16px;display:none}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--card);border-radius:14px;padding:14px 16px;border-top:3px solid var(--b3)}
+.kpi.big{border-top-color:var(--b2);grid-column:span 2}
+.kpi small{color:var(--mut);display:block}
+.kpi b{font-size:24px;display:block;margin-top:4px}
+.kpi.big b{font-size:34px}
+.kpi i{font-style:normal;font-size:12px;color:var(--mut)}
+.neg{color:var(--bad)}.pos{color:var(--ok)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px;margin-bottom:14px}
+.card{background:var(--card);border-radius:14px;padding:16px;min-width:0}
+.card h3{margin:0 0 10px;font-size:15px;color:var(--b4);font-weight:600}
+.cv{position:relative;height:260px}
+.sc{overflow:auto;max-height:460px}
+table{width:100%;border-collapse:collapse;white-space:nowrap}
+th{position:sticky;top:0;background:var(--card);color:var(--b4);text-align:right;padding:7px 8px;border-bottom:2px solid var(--b1);cursor:pointer;font-weight:600}
+td{padding:6px 8px;text-align:right;border-bottom:1px solid #353a3e}
+th:first-child,td:first-child{text-align:left}
+tbody tr:hover{background:#31363a}
+tfoot td{font-weight:700;border-top:2px solid var(--b1)}
+.tag{padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600}
+.t-ok{background:#1d4a3b;color:var(--ok)}.t-w{background:#4a3d18;color:var(--warn)}.t-bad{background:#4a2326;color:var(--bad)}.t-n{background:#34393d;color:var(--mut)}
+.alerts{display:flex;flex-wrap:wrap;gap:8px}
+@media(max-width:600px){.grid{grid-template-columns:1fr}.kpi.big{grid-column:span 1}header img{height:36px}}
+</style>
+</head>
+<body>
+<header>
+  <img src="logo.png" alt="OpenBox">
+  <div class="ctl">
+    <button data-p="7">7 dias</button><button data-p="30">30 dias</button><button data-p="0" class="on">Tudo</button>
+    <input type="date" id="d1"><input type="date" id="d2">
+    <button id="rf">↻ Atualizar</button>
+    <span id="st">carregando…</span>
+  </div>
+</header>
+<main>
+  <div class="err" id="err"></div>
+  <section class="kpis" id="kpis"></section>
+  <section class="grid">
+    <div class="card"><h3>Faturamento por dia</h3><div class="cv"><canvas id="c1"></canvas></div></div>
+    <div class="card"><h3>Fluxo de caixa acumulado (entradas − compras)</h3><div class="cv"><canvas id="c2"></canvas></div></div>
+  </section>
+  <section class="grid">
+    <div class="card"><h3>Top produtos por lucro bruto</h3><div class="cv"><canvas id="c3"></canvas></div></div>
+    <div class="card"><h3>Formas de pagamento</h3><div class="cv"><canvas id="c4"></canvas></div></div>
+  </section>
+  <section class="card" style="margin-bottom:14px"><h3>Alertas de estoque</h3><div class="alerts" id="al"></div></section>
+  <section class="card" style="margin-bottom:14px"><h3>Produtos: markup, lucro e giro (período selecionado)</h3><div class="sc" id="tp"></div></section>
+  <section class="card"><h3>Estoque (posição atual = compras − vendas)</h3><div class="sc" id="te"></div></section>
+</main>
+<script>
+/* ====== CONFIGURAÇÃO ====== */
+const CFG={
+  SHEET_ID:'13O7xpRLQbM-OAw4zSw6sj3uDDwzqRPlU-FCsjjLFQOc',
+  ABAS:{vendas:'Vendas',compras:'Compras'},   // nomes exatos das abas
+  REFRESH_MIN:5,                                // atualização automática
+  JANELA_GIRO:14,                               // dias usados p/ calcular giro
+  ALERTA_DIAS:3                                 // cobertura abaixo disso = "Repor"
+};
+/* ====== UTILITÁRIOS ====== */
+const $=s=>document.querySelector(s);
+const N=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const brl=n=>(n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const f1=n=>(n||0).toLocaleString('pt-BR',{maximumFractionDigits:1});
+const pc=n=>isFinite(n)?(n*100).toLocaleString('pt-BR',{maximumFractionDigits:1})+'%':'—';
+const num=v=>{let s=String(v==null?'':v).replace(/[R$\s]/g,'');if(!s)return NaN;if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');return parseFloat(s)};
+const dt=s=>{s=String(s||'').trim();let m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(m)return new Date(+m[3],m[2]-1,+m[1]);m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);return m?new Date(+m[1],m[2]-1,+m[3]):null};
+const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const br=d=>d.toLocaleDateString('pt-BR');
+const sum=(a,f)=>a.reduce((s,x)=>s+f(x),0);
+const pick=(o,ks)=>{for(const k of ks)if(o[k]!==undefined&&o[k]!=='')return o[k];return''};
+function csv(t){const r=[];let row=[],c='',q=false;for(let i=0;i<t.length;i++){const h=t[i];if(q){if(h=='"'){if(t[i+1]=='"'){c+='"';i++}else q=false}else c+=h}else if(h=='"')q=true;else if(h==','){row.push(c);c=''}else if(h=='\n'||h=='\r'){if(h=='\r'&&t[i+1]=='\n')i++;row.push(c);r.push(row);row=[];c=''}else c+=h}if(c||row.length){row.push(c);r.push(row)}return r}
+async function aba(nome){
+  const u=`https://docs.google.com/spreadsheets/d/${CFG.SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(nome)}`;
+  const r=await fetch(u);if(!r.ok)throw new Error('Aba "'+nome+'" não encontrada ou sem acesso');
+  const m=csv(await r.text());if(!m.length)return{H:[],R:[]};
+  const H=m[0].map(N);
+  return{H,R:m.slice(1).map(x=>{const o={};H.forEach((h,i)=>o[h]=(x[i]||'').trim());return o})};
+}
+const tx=o=>{const q=num(pick(o,['quantidade','qtd','qtde','quant']));let v=num(pick(o,['valor','valor total','total','custo total']));
+  const u=num(pick(o,['preco unitario','custo unitario','valor unitario','preco','custo']));if(isNaN(v)&&!isNaN(u))v=u*q;
+  return{d:dt(pick(o,['data','data compra','data da compra'])),i:pick(o,['item','produto','descricao','insumo']),q,v,t:N(pick(o,['tipo','pagamento','forma de pagamento','forma']))}};
+const ok=x=>x.d&&x.i&&x.q>0&&!isNaN(x.v);
+/* ====== ESTADO ====== */
+let D={V:[],C:[]},P={a:null,b:null},ch={},sort={};
+/* ====== CÁLCULOS ====== */
+function calc(){
+  const inR=x=>(!P.a||x.d>=P.a)&&(!P.b||x.d<=P.b);
+  const V=D.V.filter(inR),C=D.C.filter(inR);
+  const entrou=sum(V,x=>x.v),saiu=sum(C,x=>x.v),din=sum(V.filter(x=>x.t.startsWith('dinheiro')),x=>x.v);
+  const M={};const g=k=>M[k]||(M[k]={item:k,cq:0,cv:0,sq:0,sv:0,pq:0,pv:0,rq:0});
+  D.C.forEach(x=>{const m=g(x.i);m.cq+=x.q;m.cv+=x.v});
+  D.V.forEach(x=>{const m=g(x.i);m.sq+=x.q;m.sv+=x.v});
+  V.forEach(x=>{const m=g(x.i);m.pq+=x.q;m.pv+=x.v});
+  const hoje=new Date();hoje.setHours(0,0,0,0);const j0=new Date(hoje-CFG.JANELA_GIRO*864e5);
+  D.V.filter(x=>x.d>=j0).forEach(x=>g(x.i).rq+=x.q);
+  const L=Object.values(M).map(m=>{
+    m.cm=m.cq?m.cv/m.cq:NaN;m.preco=m.pq?m.pv/m.pq:NaN;m.mk=m.preco-m.cm;m.mkp=m.mk/m.cm;
+    m.lucro=m.pq?m.pv-m.pq*(isNaN(m.cm)?0:m.cm):0;
+    m.est=m.cq-m.sq;m.ct=m.est*(isNaN(m.cm)?0:m.est>0?m.cm:0);
+    m.pvArr=m.sq?m.sv/m.sq:m.preco;m.pot=m.est>0&&m.pvArr?m.est*m.pvArr:0;
+    m.giro=m.rq/CFG.JANELA_GIRO;m.cob=m.giro>0?m.est/m.giro:NaN;
+    m.stat=m.est<=0?'Zerado':m.giro===0?'Sem giro':m.cob<CFG.ALERTA_DIAS?'Repor':m.cob<7?'Atenção':'OK';
+    return m});
+  return{V,C,entrou,saiu,din,L,lucro:sum(L,m=>m.lucro),cmv:sum(L,m=>m.pq*(isNaN(m.cm)?0:m.cm)),
+    estCusto:sum(L,m=>m.ct),estPot:sum(L,m=>m.pot)};
+}
+/* ====== RENDER ====== */
+function kpi(l,v,s,c,big){return`<div class="kpi${big?' big':''}"><small>${l}</small><b class="${c||''}">${v}</b><i>${s||''}</i></div>`}
+function table(id,cols,rows,foot){
+  const s=sort[id]||(sort[id]={k:cols[0].k,d:cols[0].s||1});
+  const cmp=(a,b)=>{let x=a[s.k],y=b[s.k];const nx=typeof x!=='number'||isNaN(x),ny=typeof y!=='number'||isNaN(y);
+    if(nx&&ny)return String(x||'').localeCompare(String(y||''))*s.d;if(nx)return 1;if(ny)return-1;return(x-y)*s.d};
+  const R=[...rows].sort(cmp);
+  return`<table><thead><tr>${cols.map(c=>`<th onclick="srt('${id}','${c.k}')">${c.l}${s.k==c.k?(s.d>0?' ▲':' ▼'):''}</th>`).join('')}</tr></thead><tbody>${
+    R.map(r=>`<tr>${cols.map(c=>`<td>${c.f?c.f(r[c.k],r):r[c.k]}</td>`).join('')}</tr>`).join('')}</tbody>${foot?`<tfoot><tr>${foot}</tr></tfoot>`:''}</table>`}
+window.srt=(id,k)=>{const s=sort[id];s.d=s.k==k?-s.d:-1;s.k=k;draw()};
+const tagC={OK:'t-ok',Atenção:'t-w',Repor:'t-bad',Zerado:'t-bad','Sem giro':'t-n'};
+const mk=(v,r)=>isNaN(v)?'—':`<span class="${v<0?'neg':''}">${typeof v==='number'?brl(v):v}</span>`;
+function chart(id,cfg){if(ch[id])ch[id].destroy();ch[id]=new Chart($('#'+id),cfg)}
+function draw(){
+  const R=calc();
+  const caixa=R.entrou-R.saiu,dias=new Set(R.V.map(x=>iso(x.d))).size;
+  $('#kpis').innerHTML=
+    kpi('Em caixa',brl(caixa),'entrou − saiu no período',caixa<0?'neg':'pos',1)+
+    kpi('Entrou',brl(R.entrou),R.V.length+' lançamentos de venda')+
+    kpi('Saiu (compras)',brl(R.saiu),R.C.length+' compras')+
+    kpi('Em dinheiro',brl(R.din),'vendas em espécie')+
+    kpi('Lucro bruto',brl(R.lucro),'receita − custo dos produtos',R.lucro<0?'neg':'pos')+
+    kpi('Margem bruta',pc(R.lucro/R.entrou),'sobre o faturamento')+
+    kpi('Ticket médio',brl(R.entrou/(R.V.length||1)),'por lançamento')+
+    kpi('Média por dia',brl(R.entrou/(dias||1)),dias+' dias com venda')+
+    kpi('Recuperado do investimento',pc(R.entrou/(R.saiu||NaN)),'entrou ÷ saiu',R.entrou>=R.saiu?'pos':'')+
+    kpi('Estoque a custo',brl(R.estCusto),'capital parado')+
+    kpi('Estoque a preço de venda',brl(R.estPot),'receita potencial')+
+    kpi('Lucro potencial do estoque',brl(R.estPot-R.estCusto),'se vender tudo','pos');
+  /* gráficos */
+  const days={};R.V.forEach(x=>days[iso(x.d)]=(days[iso(x.d)]||0)+x.v);
+  const ks=Object.keys(days).sort(),lab=ks.map(k=>br(new Date(k+'T00:00')).slice(0,5));
+  const ax={ticks:{color:'#9fb3bf'},grid:{color:'#353a3e'}},opt={responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#fff'}}},scales:{x:ax,y:ax}};
+  chart('c1',{type:'bar',data:{labels:lab,datasets:[{label:'Faturamento',data:ks.map(k=>days[k]),backgroundColor:'#248FBB',borderRadius:6}]},options:{...opt,plugins:{legend:{display:false}}}});
+  const fl={};R.V.forEach(x=>fl[iso(x.d)]=(fl[iso(x.d)]||0)+x.v);R.C.forEach(x=>fl[iso(x.d)]=(fl[iso(x.d)]||0)-x.v);
+  const fk=Object.keys(fl).sort();let ac=0;
+  chart('c2',{type:'line',data:{labels:fk.map(k=>br(new Date(k+'T00:00')).slice(0,5)),datasets:[{label:'Caixa acumulado',data:fk.map(k=>ac+=fl[k]),borderColor:'#48A5D5',backgroundColor:'rgba(72,165,213,.18)',fill:true,tension:.25}]},options:{...opt,plugins:{legend:{display:false}}}});
+  const top=R.L.filter(m=>m.pq).sort((a,b)=>b.lucro-a.lucro).slice(0,8);
+  chart('c3',{type:'bar',data:{labels:top.map(m=>m.item),datasets:[{label:'Lucro bruto',data:top.map(m=>+m.lucro.toFixed(2)),backgroundColor:'#79B5D4',borderRadius:6}]},options:{...opt,indexAxis:'y',plugins:{legend:{display:false}}}});
+  const pg={};R.V.forEach(x=>{const k=x.t?x.t.toUpperCase():'N/I';pg[k]=(pg[k]||0)+x.v});
+  chart('c4',{type:'doughnut',data:{labels:Object.keys(pg),datasets:[{data:Object.values(pg),backgroundColor:['#18769D','#248FBB','#48A5D5','#79B5D4','#9fb3bf'],borderColor:'#292D30'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{color:'#fff'}}}}});
+  /* alertas */
+  const al=R.L.filter(m=>['Repor','Zerado','Atenção'].includes(m.stat)&&m.cq);
+  const neg=R.L.filter(m=>m.pq&&m.mk<=0);
+  $('#al').innerHTML=(al.map(m=>`<span class="tag ${tagC[m.stat]}">${m.item}: ${m.stat==='Zerado'?'zerado':f1(m.est)+' un · ~'+f1(m.cob)+' dias'}</span>`).join('')+
+    neg.map(m=>`<span class="tag t-bad">${m.item}: vendendo abaixo do custo</span>`).join(''))||'<span class="tag t-ok">Tudo certo por aqui ✔</span>';
+  /* tabelas */
+  const pr=R.L.filter(m=>m.cq||m.sq);
+  const tq=sum(pr,m=>m.pq),tv=sum(pr,m=>m.pv);
+  $('#tp').innerHTML=table('tp',[
+    {k:'item',l:'Item',s:1},{k:'cm',l:'Custo',f:mk},{k:'preco',l:'Preço',f:mk},{k:'mk',l:'Markup',f:mk},
+    {k:'mkp',l:'% Markup',f:(v)=>isNaN(v)?'—':`<span class="${v<0?'neg':''}">${pc(v)}</span>`},
+    {k:'pq',l:'Vendidos',f:v=>f1(v)},{k:'pv',l:'Receita',f:mk},{k:'lucro',l:'Lucro',f:(v,r)=>r.pq?mk(v):'—'}],
+    pr,`<td>Total</td><td></td><td></td><td></td><td>${pc(R.lucro/(R.cmv||NaN))}</td><td>${f1(tq)}</td><td>${brl(tv)}</td><td>${brl(R.lucro)}</td>`);
+  $('#te').innerHTML=table('te',[
+    {k:'item',l:'Item',s:1},{k:'est',l:'Em estoque',f:v=>f1(v)},{k:'cm',l:'CM',f:mk},{k:'ct',l:'Custo total',f:mk},
+    {k:'pot',l:'Valor de venda',f:mk},{k:'sq',l:'Vendidos (total)',f:v=>f1(v)},{k:'giro',l:'Giro/dia',f:v=>f1(v)},
+    {k:'cob',l:'Cobertura (dias)',f:v=>isNaN(v)?'—':f1(v)},{k:'stat',l:'Status',f:v=>`<span class="tag ${tagC[v]}">${v}</span>`}],
+    R.L.filter(m=>m.cq),`<td>Total</td><td>${f1(sum(R.L,m=>Math.max(m.est,0)))}</td><td></td><td>${brl(R.estCusto)}</td><td>${brl(R.estPot)}</td><td>${f1(sum(R.L,m=>m.sq))}</td><td></td><td></td><td></td>`);
+}
+/* ====== CARGA ====== */
+async function load(){
+  $('#st').textContent='atualizando…';const e=$('#err');e.style.display='none';
+  try{
+    const [v,c]=await Promise.all([aba(CFG.ABAS.vendas),aba(CFG.ABAS.compras)]);
+    D.V=v.R.map(tx).filter(ok);D.C=c.R.map(tx).filter(ok);
+    const aviso=[];
+    if(!D.V.length)aviso.push('Nenhuma venda lida. Colunas encontradas em "'+CFG.ABAS.vendas+'": '+v.H.join(', '));
+    if(!D.C.length)aviso.push('Nenhuma compra lida. Colunas encontradas em "'+CFG.ABAS.compras+'": '+c.H.join(', ')+'. O dashboard espera: Data, Item, Quantidade, Valor (total pago).');
+    if(aviso.length){e.innerHTML=aviso.join('<br>');e.style.display='block'}
+    draw();$('#st').textContent='atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  }catch(x){e.innerHTML='Não consegui ler a planilha: '+x.message+'.<br>Confira se ela está compartilhada como "Qualquer pessoa com o link" e se os nomes das abas em CFG.ABAS estão corretos.';e.style.display='block';$('#st').textContent='erro'}
+}
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-p]').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  const n=+b.dataset.p;$('#d1').value=$('#d2').value='';P.b=null;
+  if(n){const d=new Date();d.setHours(0,0,0,0);P.a=new Date(d-(n-1)*864e5)}else P.a=null;draw()});
+['d1','d2'].forEach(id=>$('#'+id).onchange=()=>{
+  document.querySelectorAll('[data-p]').forEach(x=>x.classList.remove('on'));
+  P.a=$('#d1').value?new Date($('#d1').value+'T00:00'):null;P.b=$('#d2').value?new Date($('#d2').value+'T00:00'):null;draw()});
+$('#rf').onclick=load;
+load();setInterval(load,CFG.REFRESH_MIN*60000);
+</script>
+</body>
+</html>
